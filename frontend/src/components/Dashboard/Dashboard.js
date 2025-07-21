@@ -39,13 +39,16 @@ const Dashboard = () => {
         }
 
         const token = localStorage.getItem("token");
-        const response = await fetch("/api/emails/sync", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const response = await fetch(
+          `${process.env.REACT_APP_API_URL}/emails/sync`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
 
         if (!response.ok) {
           const errorData = await response.json();
