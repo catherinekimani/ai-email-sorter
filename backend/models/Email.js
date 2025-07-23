@@ -7,6 +7,11 @@ const EmailSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+    },
     categoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
@@ -19,8 +24,11 @@ const EmailSchema = new mongoose.Schema(
     aiSummary: { type: String, required: true },
     unsubscribeLink: { type: String },
     isArchived: { type: Boolean, default: false },
+    receivedDate: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
+
+EmailSchema.index({ userId: 1, accountId: 1, gmailId: 1 }, { unique: true });
 
 module.exports = mongoose.model("Email", EmailSchema);

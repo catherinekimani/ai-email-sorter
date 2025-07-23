@@ -22,6 +22,7 @@ app.use("/auth", require("./routes/auth"));
 app.use("/api/categories", require("./routes/categories"));
 app.use("/api/emails", require("./routes/emails"));
 app.use("/api/test", require("./routes/test"));
+app.use("/api/accounts", require("./routes/accounts"));
 
 emailSyncService.startAutoSync();
 

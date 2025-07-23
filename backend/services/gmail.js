@@ -9,18 +9,18 @@ class GmailService {
     );
   }
 
-  async getGmailClient(user) {
+  async getGmailClient(account) {
     this.oauth2Client.setCredentials({
-      access_token: user.accessToken,
-      refresh_token: user.refreshToken,
+      access_token: account.accessToken,
+      refresh_token: account.refreshToken,
     });
 
     return google.gmail({ version: "v1", auth: this.oauth2Client });
   }
 
-  async getNewEmails(user, maxResults = 10) {
+  async getNewEmails(account, maxResults = 10) {
     try {
-      const gmail = await this.getGmailClient(user);
+      const gmail = await this.getGmailClient(account);
 
       const response = await gmail.users.messages.list({
         userId: "me",
@@ -35,17 +35,21 @@ class GmailService {
       const emails = [];
       for (const message of response.data.messages) {
         const email = await this.getEmailDetails(gmail, message.id);
+        email.accountId = account._id;
+        email.accountEmail = account.email;
         emails.push(email);
       }
 
       return emails;
     } catch (error) {
-      if (error.code === 401) {
+      if (error.code === 401 || error.message?.includes("invalid_grant")) {
         try {
-          await this.refreshAccessToken(user);
-          return this.getNewEmails(user, maxResults);
+          await this.refreshAccessToken(account);
+          return this.getNewEmails(account, maxResults);
         } catch (refreshError) {
-          throw refreshError;
+          throw new Error(
+            `Authentication failed for ${account.email}. Please reconnect.`
+          );
         }
       }
       throw error;
@@ -92,9 +96,9 @@ class GmailService {
     };
   }
 
-  async markEmailAsProcessed(user, messageId) {
+  async markEmailAsProcessed(account, messageId) {
     try {
-      const gmail = await this.getGmailClient(user);
+      const gmail = await this.getGmailClient(account);
 
       await gmail.users.messages.modify({
         userId: "me",
@@ -116,9 +120,9 @@ class GmailService {
     }
   }
 
-  async archiveEmail(user, messageId) {
+  async archiveEmail(account, messageId) {
     try {
-      const gmail = await this.getGmailClient(user);
+      const gmail = await this.getGmailClient(account);
 
       await gmail.users.messages.modify({
         userId: "me",
@@ -132,20 +136,20 @@ class GmailService {
     }
   }
 
-  async refreshAccessToken(user) {
+  async refreshAccessToken(account) {
     try {
       this.oauth2Client.setCredentials({
-        refresh_token: user.refreshToken,
+        refresh_token: account.refreshToken,
       });
 
       const { credentials } = await this.oauth2Client.refreshAccessToken();
 
-      const User = require("../models/User");
-      await User.findByIdAndUpdate(user._id, {
+      const Account = require("../models/Account");
+      await Account.findByIdAndUpdate(account._id, {
         accessToken: credentials.access_token,
       });
 
-      user.accessToken = credentials.access_token;
+      account.accessToken = credentials.access_token;
 
       return credentials.access_token;
     } catch (error) {
@@ -153,9 +157,9 @@ class GmailService {
     }
   }
 
-  async getUserProfile(user) {
+  async getUserProfile(account) {
     try {
-      const gmail = await this.getGmailClient(user);
+      const gmail = await this.getGmailClient(account);
       const response = await gmail.users.getProfile({
         userId: "me",
       });
@@ -165,6 +169,35 @@ class GmailService {
         messagesTotal: response.data.messagesTotal,
         threadsTotal: response.data.threadsTotal,
       };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async getEmailsFromAllAccounts(userId, maxResults = 10) {
+    try {
+      const Account = require("../models/Account");
+      const accounts = await Account.find({
+        userId,
+        isActive: true,
+      });
+
+      if (accounts.length === 0) {
+        return [];
+      }
+
+      const allEmails = [];
+
+      for (const account of accounts) {
+        try {
+          const emails = await this.getNewEmails(account, maxResults);
+          allEmails.push(...emails);
+        } catch (error) {}
+      }
+
+      allEmails.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      return allEmails;
     } catch (error) {
       throw error;
     }
