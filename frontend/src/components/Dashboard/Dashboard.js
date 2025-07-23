@@ -5,6 +5,7 @@ import CategoryForm from "./CategoryForm";
 
 const Dashboard = () => {
   const [categories, setCategories] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -25,8 +26,69 @@ const Dashboard = () => {
     }
   }, []);
 
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/accounts`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setAccounts(data);
+      }
+    } catch (error) {}
+  }, []);
+
+  const connectAccount = () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      window.location.href = "/login";
+      return;
+    }
+
+    window.location.href = `${
+      process.env.REACT_APP_API_URL
+    }/accounts/connect?token=${encodeURIComponent(token)}`;
+  };
+
+  const disconnectAccount = async (accountId) => {
+    if (
+      !window.confirm(
+        "Are you sure you want to disconnect this account? This will also remove all emails from this account."
+      )
+    )
+      return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/accounts/${accountId}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (response.ok) {
+        setAccounts(accounts.filter((acc) => acc._id !== accountId));
+
+        await fetchCategories();
+
+        setSyncStatus("Account disconnected and emails removed successfully");
+        setTimeout(() => setSyncStatus(""), 3000);
+      } else {
+        setError("Failed to disconnect account");
+      }
+    } catch (error) {
+      setError("Failed to disconnect account");
+    }
+  };
+
   const syncEmails = useCallback(
-    async (silent = false) => {
+    async (silent = false, accountId = null) => {
       if (categories.length === 0 && !silent) {
         setError("Please create at least one category before syncing emails");
         return;
@@ -47,6 +109,7 @@ const Dashboard = () => {
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
+            body: JSON.stringify(accountId ? { accountId } : {}),
           }
         );
 
@@ -96,6 +159,12 @@ const Dashboard = () => {
       window.history.replaceState({}, document.title, "/dashboard");
     }
 
+    if (urlParams.get("connected") === "success") {
+      setSyncStatus("New account connected successfully!");
+      setTimeout(() => setSyncStatus(""), 3000);
+      window.history.replaceState({}, document.title, "/dashboard");
+    }
+
     const token = localStorage.getItem("token");
     if (!token) {
       window.location.href = "/login";
@@ -103,7 +172,8 @@ const Dashboard = () => {
     }
 
     fetchCategories();
-  }, [fetchCategories]);
+    fetchAccounts();
+  }, [fetchCategories, fetchAccounts]);
 
   useEffect(() => {
     if (
@@ -155,6 +225,18 @@ const Dashboard = () => {
     );
   }
 
+  const handleLogout = () => {
+    if (window.confirm("Are you sure you want to logout?")) {
+      localStorage.removeItem("token");
+
+      setSyncStatus("Logging out...");
+
+      setTimeout(() => {
+        window.location.href = "/login";
+      }, 500);
+    }
+  };
+
   return (
     <div className="dashboard">
       <div className="dashboard-header">
@@ -170,13 +252,16 @@ const Dashboard = () => {
                 : "Sync new emails"
             }
           >
-            {syncing ? "⏳ Syncing..." : "🔄 Sync Emails"}
+            {syncing ? "⏳ Syncing..." : "Sync Emails"}
           </button>
           <button
             onClick={() => setShowForm(true)}
             className="add-category-btn"
           >
             + Add Category
+          </button>
+          <button onClick={handleLogout} className="logout-btn">
+            Logout
           </button>
         </div>
       </div>
@@ -203,15 +288,60 @@ const Dashboard = () => {
           </button>
         </div>
       )}
+
       <div className="dashboard-content">
-        <div className="gmail-connection">
-          <h3>📬 Gmail Connection</h3>
-          <p>Connected and monitoring for new emails</p>
-          <div className="connection-status">
-            <span className="status-indicator active"></span>
-            <span>Active</span>
-            {syncing && <span className="sync-indicator">🔄</span>}
-          </div>
+        <div className="gmail-accounts">
+          <h3>📬 Connected Gmail Accounts</h3>
+          {accounts.length === 0 ? (
+            <div className="no-accounts">
+              <p>No Gmail accounts connected</p>
+              <button onClick={connectAccount} className="connect-btn">
+                + Connect Gmail Account
+              </button>
+            </div>
+          ) : (
+            <div className="accounts-list">
+              {accounts.map((account) => (
+                <div key={account._id} className="account-card">
+                  <div className="account-info">
+                    <span className="account-email">{account.email}</span>
+                    {account.isPrimary && (
+                      <span className="primary-badge">Primary</span>
+                    )}
+                    <div className="account-actions">
+                      <button
+                        onClick={() => syncEmails(false, account._id)}
+                        className="sync-account-btn"
+                        disabled={syncing}
+                      >
+                        🔄
+                      </button>
+                      {!account.isPrimary && (
+                        <button
+                          onClick={() => disconnectAccount(account._id)}
+                          className="disconnect-btn"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <button onClick={connectAccount} className="connect-btn">
+                + Connect Another Account
+              </button>
+            </div>
+          )}
+
+          {accounts.length > 0 && (
+            <div className="connection-status">
+              <span className="status-indicator active"></span>
+              <span>{accounts.length} account(s) connected</span>
+              {syncing && <span className="sync-indicator">🔄</span>}
+            </div>
+          )}
+
           {categories.length === 0 && (
             <div className="setup-notice">
               <p>⚠️ Create your first category to start sorting emails!</p>
