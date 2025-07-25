@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { emailsAPI, categoriesAPI } from "../../services/api";
-
 const EmailList = () => {
   const { categoryId } = useParams();
   const [emails, setEmails] = useState([]);
@@ -11,6 +10,7 @@ const EmailList = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
   const [expandedEmail, setExpandedEmail] = useState(null);
+  const [unsubscribeResults, setUnsubscribeResults] = useState(null);
 
   useEffect(() => {
     fetchEmails();
@@ -62,9 +62,12 @@ const EmailList = () => {
 
     try {
       setActionLoading(true);
-      await emailsAPI.bulkDelete(selectedEmails);
+      const response = await emailsAPI.bulkDelete(selectedEmails);
       setEmails(emails.filter((email) => !selectedEmails.includes(email._id)));
       setSelectedEmails([]);
+
+      setError(`✅ ${response.data.deletedCount} emails deleted successfully`);
+      setTimeout(() => setError(""), 3000);
     } catch (error) {
       setError("Failed to delete emails");
     } finally {
@@ -75,16 +78,42 @@ const EmailList = () => {
   const handleBulkUnsubscribe = async () => {
     if (selectedEmails.length === 0) return;
 
-    if (!window.confirm(`Unsubscribe from ${selectedEmails.length} emails?`))
+    if (
+      !window.confirm(
+        `Attempt to unsubscribe from ${selectedEmails.length} emails? This may take a few minutes.`
+      )
+    )
       return;
 
     try {
       setActionLoading(true);
-      await emailsAPI.bulkUnsubscribe(selectedEmails);
-      alert("Unsubscribe process started! This may take a few minutes.");
-      setSelectedEmails([]);
+      setUnsubscribeResults(null);
+      setError("");
+
+      const response = await emailsAPI.bulkUnsubscribe(selectedEmails);
+
+      if (response && response.data) {
+        const results = response.data || {};
+        setUnsubscribeResults(results);
+        setSelectedEmails([]);
+
+        const successCount = results.successful || 0;
+        const totalCount = results.total || 0;
+
+        if (successCount > 0) {
+          setError(
+            `Success! ${successCount}/${totalCount} emails unsubscribed. Check results below.`
+          );
+        } else {
+          setError(
+            "Unsubscribe process completed. Check results below for details."
+          );
+        }
+      } else {
+        setError("❌ Unexpected response format");
+      }
     } catch (error) {
-      setError("Failed to unsubscribe");
+      setError("❌ Request failed");
     } finally {
       setActionLoading(false);
     }
@@ -102,6 +131,10 @@ const EmailList = () => {
     } catch (error) {
       setError("Failed to load email content");
     }
+  };
+
+  const clearUnsubscribeResults = () => {
+    setUnsubscribeResults(null);
   };
 
   if (loading) {
@@ -142,14 +175,18 @@ const EmailList = () => {
                   className="delete-btn"
                   disabled={actionLoading}
                 >
-                  Delete ({selectedEmails.length})
+                  {actionLoading
+                    ? "Deleting..."
+                    : `Delete (${selectedEmails.length})`}
                 </button>
                 <button
                   onClick={handleBulkUnsubscribe}
                   className="unsubscribe-btn"
                   disabled={actionLoading}
                 >
-                  Unsubscribe ({selectedEmails.length})
+                  {actionLoading
+                    ? "Unsubscribing..."
+                    : `Unsubscribe (${selectedEmails.length})`}
                 </button>
               </div>
             )}
@@ -158,9 +195,101 @@ const EmailList = () => {
       </div>
 
       {error && (
-        <div className="error-message">
+        <div
+          className={`error-message ${
+            error.startsWith("✅") ? "success-message" : ""
+          }`}
+        >
           {error}
           <button onClick={() => setError("")}>×</button>
+        </div>
+      )}
+
+      {unsubscribeResults && (
+        <div className="unsubscribe-results">
+          <div className="results-header">
+            <h3>Unsubscribe Results</h3>
+            <button onClick={clearUnsubscribeResults} className="close-results">
+              ×
+            </button>
+          </div>
+
+          <div className="results-summary">
+            <p>
+              <strong>Total:</strong> {unsubscribeResults.total || 0}
+            </p>
+            <p>
+              <strong>Successful:</strong> {unsubscribeResults.successful || 0}
+            </p>
+            <p>
+              <strong>Failed:</strong> {unsubscribeResults.failed || 0}
+            </p>
+            {unsubscribeResults.alreadyUnsubscribed > 0 && (
+              <p>
+                <strong>Already Unsubscribed:</strong>{" "}
+                {unsubscribeResults.alreadyUnsubscribed}
+              </p>
+            )}
+            {unsubscribeResults.noUnsubscribeLink > 0 && (
+              <p>
+                <strong>No Unsubscribe Link:</strong>{" "}
+                {unsubscribeResults.noUnsubscribeLink}
+              </p>
+            )}
+          </div>
+
+          {unsubscribeResults.results &&
+            unsubscribeResults.results.length > 0 && (
+              <div className="results-details">
+                <h4>Details:</h4>
+                <div className="results-list">
+                  {unsubscribeResults.results.map((result, index) => (
+                    <div
+                      key={index}
+                      className={`result-item ${
+                        result.success ? "success" : "failed"
+                      }`}
+                    >
+                      <div className="result-email">
+                        <strong>
+                          {result.subject || `Email ${index + 1}`}
+                        </strong>
+                      </div>
+                      <div className="result-status">
+                        {result.success ? (
+                          <span className="success-text">
+                            ✅ Success{" "}
+                            {result.strategy && `(Strategy ${result.strategy})`}
+                            {result.wasAlreadyUnsubscribed &&
+                              " - Already unsubscribed"}
+                            {result.message && (
+                              <div className="result-message">
+                                {result.message}
+                              </div>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="error-text">
+                            Failed
+                            {result.reason === "NO_UNSUBSCRIBE_LINK" &&
+                              " - No unsubscribe link"}
+                            {result.reason === "ALREADY_UNSUBSCRIBED" &&
+                              " - Already unsubscribed"}
+                            {result.reason === "INVALID_URL" &&
+                              " - Invalid URL"}
+                            {result.error && (
+                              <div className="result-message">
+                                {result.error}
+                              </div>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
         </div>
       )}
 
@@ -186,8 +315,15 @@ const EmailList = () => {
                   <h4>{email.subject}</h4>
                   <p className="email-from">From: {email.from}</p>
                   <p className="email-date">
-                    {new Date(email.date).toLocaleDateString()}
+                    {new Date(
+                      email.receivedDate || email.date
+                    ).toLocaleDateString()}
                   </p>
+                  {email.unsubscribeLink && (
+                    <p className="email-unsubscribe-info">
+                      Unsubscribe link available
+                    </p>
+                  )}
                 </div>
 
                 <button

@@ -13,6 +13,8 @@ const CategoryDetail = () => {
   const [selectedEmailContent, setSelectedEmailContent] = useState(null);
   const [categoryName, setCategoryName] = useState("");
 
+  const [unsubscribeResults, setUnsubscribeResults] = useState(null);
+
   const fetchEmails = useCallback(async () => {
     try {
       setLoading(true);
@@ -69,36 +71,103 @@ const CategoryDetail = () => {
   };
 
   const handleUnsubscribe = async () => {
-    if (selectedEmails.length === 0) return;
+    const emailsToUnsubscribe = selectedEmails.filter((emailId) => {
+      const email = emails.find((e) => e._id === emailId);
+      return email?.unsubscribeLink && !email?.unsubscribeProcessed;
+    });
 
-    if (
-      !window.confirm(
-        `Unsubscribe from ${selectedEmails.length} selected emails?`
-      )
-    ) {
+    if (emailsToUnsubscribe.length === 0) {
+      setError(
+        "No emails available for unsubscribe (already processed or no unsubscribe link)"
+      );
       return;
     }
 
+    if (
+      !window.confirm(
+        `Attempt to unsubscribe from ${emailsToUnsubscribe.length} emails? This may take a few minutes.`
+      )
+    )
+      return;
+
     try {
       setProcessing(true);
-      const response = await emailsAPI.bulkUnsubscribe(selectedEmails);
+      setUnsubscribeResults(null);
+      setError("");
 
-      const successful = response.data.filter((r) => r.success).length;
-      const failed = response.data.length - successful;
+      const response = await emailsAPI.bulkUnsubscribe(emailsToUnsubscribe);
 
-      if (successful > 0) {
-        alert(
-          `Successfully unsubscribed from ${successful} emails${
-            failed > 0 ? `, ${failed} failed` : ""
+      if (response && response.data) {
+        const results = response.data;
+
+        if (results.successful && results.successful > 0) {
+          let successfulEmailIds = [];
+
+          if (results.results && Array.isArray(results.results)) {
+            successfulEmailIds = results.results
+              .filter((result) => result.success)
+              .map((result) => result.emailId)
+              .filter((id) => id);
+          }
+
+          if (
+            successfulEmailIds.length === 0 &&
+            results.successful === emailsToUnsubscribe.length
+          ) {
+            successfulEmailIds = emailsToUnsubscribe;
+          } else if (
+            successfulEmailIds.length === 0 &&
+            results.successful > 0
+          ) {
+            successfulEmailIds = emailsToUnsubscribe.slice(
+              0,
+              results.successful
+            );
+          }
+
+          if (successfulEmailIds.length > 0) {
+            setEmails((prevEmails) =>
+              prevEmails.map((email) =>
+                successfulEmailIds.includes(email._id)
+                  ? {
+                      ...email,
+                      unsubscribeProcessed: true,
+                      unsubscribeDate: new Date(),
+                    }
+                  : email
+              )
+            );
+          }
+
+          setUnsubscribeResults(results);
+          setSelectedEmails([]);
+          setError(
+            `Success! ${results.successful} email(s) unsubscribed successfully. Check results below.`
+          );
+        } else if (results.total && results.total > 0) {
+          setUnsubscribeResults(results);
+          setSelectedEmails([]);
+          setError(
+            "Unsubscribe process completed. Check results below for details."
+          );
+        } else {
+          setError("No emails were processed. Please try again.");
+        }
+      } else {
+        setError("Unexpected response from server");
+      }
+    } catch (error) {
+      if (error.response) {
+        setError(
+          `Server error: ${
+            error.response.data?.message || "Unknown server error"
           }`
         );
+      } else if (error.request) {
+        setError("Network error - please check your connection");
       } else {
-        alert("No unsubscribe actions were successful");
+        setError(`Request failed: ${error.message}`);
       }
-
-      setSelectedEmails([]);
-    } catch (error) {
-      setError("Failed to unsubscribe from emails");
     } finally {
       setProcessing(false);
     }
@@ -110,6 +179,10 @@ const CategoryDetail = () => {
 
   const closeEmailModal = () => {
     setSelectedEmailContent(null);
+  };
+
+  const clearUnsubscribeResults = () => {
+    setUnsubscribeResults(null);
   };
 
   if (loading) {
@@ -132,9 +205,101 @@ const CategoryDetail = () => {
       </div>
 
       {error && (
-        <div className="error-message">
+        <div
+          className={`error-message ${
+            error.startsWith("✅") ? "success-message" : ""
+          }`}
+        >
           {error}
           <button onClick={() => setError("")}>×</button>
+        </div>
+      )}
+
+      {unsubscribeResults && (
+        <div className="unsubscribe-results">
+          <div className="results-header">
+            <h3>Unsubscribe Results</h3>
+            <button onClick={clearUnsubscribeResults} className="close-results">
+              ×
+            </button>
+          </div>
+
+          <div className="results-summary">
+            <p>
+              <strong>Total:</strong> {unsubscribeResults.total || 0}
+            </p>
+            <p>
+              <strong>Successful:</strong> {unsubscribeResults.successful || 0}
+            </p>
+            <p>
+              <strong>Failed:</strong> {unsubscribeResults.failed || 0}
+            </p>
+            {unsubscribeResults.alreadyUnsubscribed > 0 && (
+              <p>
+                <strong>Already Unsubscribed:</strong>{" "}
+                {unsubscribeResults.alreadyUnsubscribed}
+              </p>
+            )}
+            {unsubscribeResults.noUnsubscribeLink > 0 && (
+              <p>
+                <strong>No Unsubscribe Link:</strong>{" "}
+                {unsubscribeResults.noUnsubscribeLink}
+              </p>
+            )}
+          </div>
+
+          {unsubscribeResults.results &&
+            unsubscribeResults.results.length > 0 && (
+              <div className="results-details">
+                <h4>Details:</h4>
+                <div className="results-list">
+                  {unsubscribeResults.results.map((result, index) => (
+                    <div
+                      key={index}
+                      className={`result-item ${
+                        result.success ? "success" : "failed"
+                      }`}
+                    >
+                      <div className="result-email">
+                        <strong>
+                          {result.subject || `Email ${index + 1}`}
+                        </strong>
+                      </div>
+                      <div className="result-status">
+                        {result.success ? (
+                          <span className="success-text">
+                            Success{" "}
+                            {result.strategy && `(Strategy ${result.strategy})`}
+                            {result.wasAlreadyUnsubscribed &&
+                              " - Already unsubscribed"}
+                            {result.message && (
+                              <div className="result-message">
+                                {result.message}
+                              </div>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="error-text">
+                            Failed
+                            {result.reason === "NO_UNSUBSCRIBE_LINK" &&
+                              " - No unsubscribe link"}
+                            {result.reason === "ALREADY_UNSUBSCRIBED" &&
+                              " - Already unsubscribed"}
+                            {result.reason === "INVALID_URL" &&
+                              " - Invalid URL"}
+                            {result.error && (
+                              <div className="result-message">
+                                {result.error}
+                              </div>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
         </div>
       )}
 
@@ -172,15 +337,28 @@ const CategoryDetail = () => {
                     ? "Deleting..."
                     : `Delete (${selectedEmails.length})`}
                 </button>
-                <button
-                  onClick={handleUnsubscribe}
-                  className="unsubscribe-btn"
-                  disabled={processing}
-                >
-                  {processing
-                    ? "Unsubscribing..."
-                    : `Unsubscribe (${selectedEmails.length})`}
-                </button>
+                {selectedEmails.some((emailId) => {
+                  const email = emails.find((e) => e._id === emailId);
+                  return email?.unsubscribeLink && !email?.unsubscribeProcessed;
+                }) && (
+                  <button
+                    onClick={handleUnsubscribe}
+                    className="unsubscribe-btn"
+                    disabled={processing}
+                  >
+                    {processing
+                      ? "Unsubscribing..."
+                      : `Unsubscribe (${
+                          selectedEmails.filter((emailId) => {
+                            const email = emails.find((e) => e._id === emailId);
+                            return (
+                              email?.unsubscribeLink &&
+                              !email?.unsubscribeProcessed
+                            );
+                          }).length
+                        })`}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -216,8 +394,14 @@ const CategoryDetail = () => {
                     {email.aiSummary || "No summary available"}
                   </div>
                   {email.unsubscribeLink && (
-                    <div className="unsubscribe-indicator">
-                      📧 Unsubscribe available
+                    <div
+                      className={`unsubscribe-indicator ${
+                        email.unsubscribeProcessed ? "unsubscribed" : ""
+                      }`}
+                    >
+                      {email.unsubscribeProcessed
+                        ? "Successfully unsubscribed"
+                        : "Unsubscribe available"}
                     </div>
                   )}
                 </div>

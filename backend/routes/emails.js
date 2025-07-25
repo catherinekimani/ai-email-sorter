@@ -24,6 +24,28 @@ router.get("/category/:categoryId", auth, async (req, res) => {
   }
 });
 
+router.get("/:emailId/content", auth, async (req, res) => {
+  try {
+    const email = await Email.findOne({
+      _id: req.params.emailId,
+      userId: req.user._id,
+    });
+
+    if (!email) {
+      return res.status(404).json({ msg: "Email not found" });
+    }
+
+    res.json({
+      content: email.body,
+      subject: email.subject,
+      from: email.from,
+      receivedDate: email.receivedDate,
+    });
+  } catch (error) {
+    res.status(500).json({ msg: "Server error" });
+  }
+});
+
 router.post("/sync", auth, async (req, res) => {
   try {
     console.log("=== EMAIL SYNC REQUEST ===");
@@ -63,12 +85,10 @@ router.post("/sync", auth, async (req, res) => {
 
     for (const account of accountsToSync) {
       try {
-
         let newEmails = [];
         try {
           newEmails = await gmailService.getNewEmails(account, 20);
         } catch (gmailError) {
-
           if (
             gmailError.message.includes("auth") ||
             gmailError.message.includes("token")
@@ -116,16 +136,16 @@ router.post("/sync", auth, async (req, res) => {
             let summary = "Summary not available";
             try {
               summary = await aiService.summarizeEmail(emailData);
-            } catch (summaryError) {
-            }
+            } catch (summaryError) {}
 
             let unsubscribeLink = null;
             try {
               unsubscribeLink = aiService.extractUnsubscribeLink(
                 emailData.body || ""
               );
-            } catch (linkError) {
-            }
+              if (unsubscribeLink) {
+              }
+            } catch (linkError) {}
 
             const email = new Email({
               userId: req.user._id,
@@ -160,7 +180,6 @@ router.post("/sync", auth, async (req, res) => {
 
         totalSyncedCount += accountSyncedCount;
         totalEmailsProcessed += newEmails.length;
-
       } catch (accountError) {
         errors.push({
           account: account.email,
@@ -198,8 +217,6 @@ router.post("/sync", auth, async (req, res) => {
 
     res.json(response);
   } catch (error) {
-    console.error("=== EMAIL SYNC ERROR ===");
-
     res.status(500).json({
       msg: "Sync failed",
       error: error.message,
@@ -210,44 +227,110 @@ router.post("/sync", auth, async (req, res) => {
 router.post("/unsubscribe", auth, async (req, res) => {
   try {
     const { emailIds } = req.body;
+
+    if (!emailIds || emailIds.length === 0) {
+      return res.status(400).json({ msg: "No email IDs provided" });
+    }
+
     const emails = await Email.find({
       _id: { $in: emailIds },
       userId: req.user._id,
     });
 
+    if (emails.length === 0) {
+      return res.status(404).json({ msg: "No emails found" });
+    }
+
     const results = [];
+    let successCount = 0;
+    let alreadyUnsubscribedCount = 0;
+    let noUnsubscribeLinkCount = 0;
+    let failedCount = 0;
+
     for (const email of emails) {
-      if (email.unsubscribeLink) {
-        try {
-          const success = await unsubscribeService.unsubscribe(
-            email.unsubscribeLink
-          );
-          results.push({ emailId: email._id, success });
-        } catch (unsubError) {
-          results.push({
-            emailId: email._id,
-            success: false,
-            error: unsubError.message,
-          });
-        }
-      } else {
+      if (!email.unsubscribeLink) {
+        noUnsubscribeLinkCount++;
         results.push({
           emailId: email._id,
+          subject: email.subject,
           success: false,
           error: "No unsubscribe link found",
+          reason: "NO_UNSUBSCRIBE_LINK",
+        });
+        continue;
+      }
+
+      try {
+        const unsubscribeResult = await unsubscribeService.unsubscribe(
+          email.unsubscribeLink
+        );
+
+        if (unsubscribeResult.success) {
+          if (
+            unsubscribeResult.wasAlreadyUnsubscribed ||
+            unsubscribeResult.reason === "ALREADY_UNSUBSCRIBED"
+          ) {
+            alreadyUnsubscribedCount++;
+          } else {
+            successCount++;
+          }
+
+          await Email.findByIdAndUpdate(email._id, {
+            $set: { unsubscribeProcessed: true, unsubscribeDate: new Date() },
+          });
+        } else {
+          failedCount++;
+        }
+
+        results.push({
+          emailId: email._id,
+          subject: email.subject,
+          success: unsubscribeResult.success,
+          message: unsubscribeResult.message,
+          error: unsubscribeResult.error,
+          strategy: unsubscribeResult.strategy,
+          reason: unsubscribeResult.reason,
+          wasAlreadyUnsubscribed: unsubscribeResult.wasAlreadyUnsubscribed,
+        });
+      } catch (unsubError) {
+        failedCount++;
+        results.push({
+          emailId: email._id,
+          subject: email.subject,
+          success: false,
+          error: unsubError.message,
+          reason: "TECHNICAL_ERROR",
         });
       }
     }
 
-    res.json(results);
+    const response = {
+      msg: `Processed ${emails.length} emails. ${successCount} successful, ${alreadyUnsubscribedCount} already unsubscribed, ${noUnsubscribeLinkCount} no link, ${failedCount} failed.`,
+      total: emails.length,
+      successful: successCount,
+      failed: failedCount,
+      alreadyUnsubscribed: alreadyUnsubscribedCount,
+      noUnsubscribeLink: noUnsubscribeLinkCount,
+      results: results,
+    };
+
+    res.json(response);
   } catch (error) {
-    res.status(500).json({ msg: "Unsubscribe failed", error: error.message });
+    res.status(500).json({
+      msg: "Unsubscribe failed",
+      error: error.message,
+    });
   }
 });
 
 router.delete("/bulk", auth, async (req, res) => {
   try {
     const { emailIds } = req.body;
+
+    if (!emailIds || emailIds.length === 0) {
+      return res.status(400).json({ msg: "No email IDs provided" });
+    }
+
     const result = await Email.deleteMany({
       _id: { $in: emailIds },
       userId: req.user._id,

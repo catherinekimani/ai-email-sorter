@@ -25,10 +25,17 @@ const EmailSchema = new mongoose.Schema(
     unsubscribeLink: { type: String },
     isArchived: { type: Boolean, default: false },
     receivedDate: { type: Date, default: Date.now },
+
+    unsubscribeProcessed: { type: Boolean, default: false },
+    unsubscribeDate: { type: Date },
+    unsubscribeSuccess: { type: Boolean },
+    unsubscribeError: { type: String },
   },
   { timestamps: true }
 );
 
 EmailSchema.index({ userId: 1, accountId: 1, gmailId: 1 }, { unique: true });
+EmailSchema.index({ userId: 1, categoryId: 1, receivedDate: -1 });
+EmailSchema.index({ unsubscribeLink: 1 });
 
 module.exports = mongoose.model("Email", EmailSchema);
