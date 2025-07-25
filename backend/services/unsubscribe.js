@@ -34,11 +34,7 @@ class UnsubscribeService {
           "--single-process",
           "--disable-extensions",
         ],
-        executablePath:
-          process.env.NODE_ENV === "production"
-            ? process.env.PUPPETEER_EXECUTABLE_PATH ||
-              "/usr/bin/chromium-browser"
-            : undefined,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       });
 
       const page = await browser.newPage();
