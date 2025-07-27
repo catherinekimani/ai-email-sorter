@@ -1,5 +1,4 @@
-const puppeteer = require("puppeteer");
-
+const puppeteer = require("puppeteer-core");
 class UnsubscribeService {
   async unsubscribe(unsubscribeUrl) {
     if (!unsubscribeUrl) {
@@ -17,26 +16,19 @@ class UnsubscribeService {
         reason: "INVALID_URL",
       };
     }
-
+    const isProd = process.env.NODE_ENV == "production";
+    const puppeteer = isProd ? require("puppeteer-core") : require("puppeteer");
+    const prodUrl =
+      "/opt/render/.cache/puppeteer/chrome/linux-138.0.7204.168/chrome-linux64/chrome";
+    const executablePath = isProd ? prodUrl : puppeteer.executablePath();
     let browser;
+
     try {
       browser = await puppeteer.launch({
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
         headless: true,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--disable-blink-features=AutomationControlled",
-          "--disable-features=VizDisplayCompositor",
-          "--no-first-run",
-          "--no-zygote",
-          "--single-process",
-          "--disable-extensions",
-        ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        executablePath,
       });
-
       const page = await browser.newPage();
 
       await page.setUserAgent(
@@ -106,6 +98,7 @@ class UnsubscribeService {
         reason: "NO_UNSUBSCRIBE_METHOD_FOUND",
       };
     } catch (error) {
+      console.log(error);
       return {
         success: false,
         error: error.message,
